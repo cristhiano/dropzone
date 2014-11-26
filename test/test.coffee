@@ -1218,6 +1218,57 @@ describe "Dropzone", ->
 
             dropzone.createThumbnail(blob)
 
+      
+
+      describe "resizedImage", ->
+        it "should properly queue the resized image creation", (done) ->
+          doneFunction = null
+
+          dropzone.accept = (file, done) -> doneFunction = done
+          dropzone.processFile = ->
+          dropzone.uploadFile = ->
+
+          
+
+          mock1 = getMockFile()
+          mock2 = getMockFile()
+          mock3 = getMockFile()
+          mock1.type = "image/jpg"
+          mock2.type = "image/jpg"
+          mock3.type = "image/jpg"
+
+
+
+          dropzone.on "resizedImage", ->
+            console.log "HII"
+
+          ct_file = ct_callback = null
+          dropzone.createResizedImage = (file, callback) ->
+            ct_file = file
+            ct_callback = callback
+
+          sinon.spy dropzone, "createResizedImage"
+          
+          dropzone.addFile mock1
+          dropzone.addFile mock2
+          dropzone.addFile mock3
+
+          # console.log mock1, ct_file
+
+          dropzone.files.length.should.eql 3
+          setTimeout (->
+            dropzone.createResizedImage.callCount.should.eql 1
+            # mock1.should.equal ct_file
+            ct_callback()
+            dropzone.createResizedImage.callCount.should.eql 2
+            # mock2.should.equal ct_file
+            ct_callback()
+            dropzone.createResizedImage.callCount.should.eql 3
+            # mock3.should.equal ct_file
+
+            done()
+          ), 10
+
     describe "enqueueFile()", ->
       it "should be wrapped by enqueueFiles()", ->
         sinon.stub dropzone, "enqueueFile"

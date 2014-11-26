@@ -1396,7 +1396,7 @@
           removeLink2.dispatchEvent(event);
           return dropzone.removeFile.callCount.should.eql(2);
         });
-        return describe("thumbnails", function() {
+        describe("thumbnails", function() {
           it("should properly queue the thumbnail creation", function(done) {
             var ct_callback, ct_file, doneFunction, mock1, mock2, mock3;
             doneFunction = null;
@@ -1466,6 +1466,44 @@
               });
               return dropzone.createThumbnail(blob);
             });
+          });
+        });
+        return describe("resizedImage", function() {
+          return it("should properly queue the resized image creation", function(done) {
+            var ct_callback, ct_file, doneFunction, mock1, mock2, mock3;
+            doneFunction = null;
+            dropzone.accept = function(file, done) {
+              return doneFunction = done;
+            };
+            dropzone.processFile = function() {};
+            dropzone.uploadFile = function() {};
+            mock1 = getMockFile();
+            mock2 = getMockFile();
+            mock3 = getMockFile();
+            mock1.type = "image/jpg";
+            mock2.type = "image/jpg";
+            mock3.type = "image/jpg";
+            dropzone.on("resizedImage", function() {
+              return console.log("HII");
+            });
+            ct_file = ct_callback = null;
+            dropzone.createResizedImage = function(file, callback) {
+              ct_file = file;
+              return ct_callback = callback;
+            };
+            sinon.spy(dropzone, "createResizedImage");
+            dropzone.addFile(mock1);
+            dropzone.addFile(mock2);
+            dropzone.addFile(mock3);
+            dropzone.files.length.should.eql(3);
+            return setTimeout((function() {
+              dropzone.createResizedImage.callCount.should.eql(1);
+              ct_callback();
+              dropzone.createResizedImage.callCount.should.eql(2);
+              ct_callback();
+              dropzone.createResizedImage.callCount.should.eql(3);
+              return done();
+            }), 10);
           });
         });
       });

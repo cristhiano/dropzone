@@ -138,7 +138,7 @@ require.define = function (name, exports) {
     exports: exports
   };
 };
-require.register("component~emitter@1.1.2", function (exports, module) {
+require.register("component~emitter@1.1.3", function (exports, module) {
 
 /**
  * Expose `Emitter`.
@@ -350,12 +350,12 @@ require.register("dropzone/lib/dropzone.js", function (exports, module) {
     __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
     __slice = [].slice;
 
-  Em = typeof Emitter !== "undefined" && Emitter !== null ? Emitter : require("component~emitter@1.1.2");
+  Em = typeof Emitter !== "undefined" && Emitter !== null ? Emitter : require("component~emitter@1.1.3");
 
   noop = function() {};
 
   Dropzone = (function(_super) {
-    var extend;
+    var dataURLToBlob, extend;
 
     __extends(Dropzone, _super);
 
@@ -368,7 +368,7 @@ require.register("dropzone/lib/dropzone.js", function (exports, module) {
         dropzone.on("dragEnter", function() { });
      */
 
-    Dropzone.prototype.events = ["drop", "dragstart", "dragend", "dragenter", "dragover", "dragleave", "addedfile", "removedfile", "thumbnail", "error", "errormultiple", "processing", "processingmultiple", "uploadprogress", "totaluploadprogress", "sending", "sendingmultiple", "success", "successmultiple", "canceled", "canceledmultiple", "complete", "completemultiple", "reset", "maxfilesexceeded", "maxfilesreached"];
+    Dropzone.prototype.events = ["drop", "dragstart", "dragend", "dragenter", "dragover", "dragleave", "addedfile", "removedfile", "thumbnail", "resizedImage", "error", "errormultiple", "processing", "processingmultiple", "uploadprogress", "totaluploadprogress", "sending", "sendingmultiple", "success", "successmultiple", "canceled", "canceledmultiple", "complete", "completemultiple", "reset", "maxfilesexceeded", "maxfilesreached"];
 
     Dropzone.prototype.defaultOptions = {
       url: null,
@@ -382,6 +382,10 @@ require.register("dropzone/lib/dropzone.js", function (exports, module) {
       maxThumbnailFilesize: 10,
       thumbnailWidth: 100,
       thumbnailHeight: 100,
+      createResizedImages: true,
+      maxResizedImageFilesize: 10,
+      resizedImageWidth: 100,
+      resizedImageHeight: 100,
       maxFiles: null,
       params: {},
       clickable: true,
@@ -572,6 +576,10 @@ require.register("dropzone/lib/dropzone.js", function (exports, module) {
           }
           return _results;
         }
+      },
+      resizedImage: function(file, dataUrl) {
+        file.resizedImage = dataUrl;
+        return console.log(file);
       },
       error: function(file, message) {
         var node, _i, _len, _ref, _results;
@@ -1208,6 +1216,7 @@ require.register("dropzone/lib/dropzone.js", function (exports, module) {
       file.status = Dropzone.ADDED;
       this.emit("addedfile", file);
       this._enqueueThumbnail(file);
+      this._enqueueResizedImage(file);
       return this.accept(file, (function(_this) {
         return function(error) {
           if (error) {
@@ -1276,6 +1285,35 @@ require.register("dropzone/lib/dropzone.js", function (exports, module) {
       })(this));
     };
 
+    Dropzone.prototype._resizedImageQueue = [];
+
+    Dropzone.prototype._processingResizedImage = false;
+
+    Dropzone.prototype._enqueueResizedImage = function(file) {
+      if (this.options.createResizedImages && file.type.match(/image.*/) && file.size <= this.options.maxResizedImageFilesize * 1024 * 1024) {
+        this._resizedImageQueue.push(file);
+        return setTimeout(((function(_this) {
+          return function() {
+            return _this._processResizedImageQueue();
+          };
+        })(this)), 0);
+      }
+    };
+
+    Dropzone.prototype._processResizedImageQueue = function() {
+      if (this._processingResizedImage || this._resizedImageQueue.length === 0) {
+        return;
+      }
+      this._processingResizedImage = true;
+      console.log('now @_processingResizedImage', this._processingResizedImage);
+      return this.createResizedImage(this._resizedImageQueue.shift(), (function(_this) {
+        return function() {
+          _this._processingResizedImage = false;
+          return _this._processResizedImageQueue();
+        };
+      })(this));
+    };
+
     Dropzone.prototype.removeFile = function(file) {
       if (file.status === Dropzone.UPLOADING) {
         this.cancelUpload(file);
@@ -1334,6 +1372,48 @@ require.register("dropzone/lib/dropzone.js", function (exports, module) {
             drawImageIOSFix(ctx, img, (_ref = resizeInfo.srcX) != null ? _ref : 0, (_ref1 = resizeInfo.srcY) != null ? _ref1 : 0, resizeInfo.srcWidth, resizeInfo.srcHeight, (_ref2 = resizeInfo.trgX) != null ? _ref2 : 0, (_ref3 = resizeInfo.trgY) != null ? _ref3 : 0, resizeInfo.trgWidth, resizeInfo.trgHeight);
             thumbnail = canvas.toDataURL("image/png");
             _this.emit("thumbnail", file, thumbnail);
+            if (callback != null) {
+              return callback();
+            }
+          };
+          return img.src = fileReader.result;
+        };
+      })(this);
+      return fileReader.readAsDataURL(file);
+    };
+
+    Dropzone.prototype.createResizedImage = function(file, callback) {
+      var fileReader;
+      fileReader = new FileReader;
+      fileReader.onload = (function(_this) {
+        return function() {
+          var img;
+          if (file.type === "image/svg+xml") {
+            _this.emit("resizedImage", file, fileReader.result);
+            if (callback != null) {
+              callback();
+            }
+            return;
+          }
+          img = document.createElement("img");
+          img.onload = function() {
+            var canvas, ctx, resizeInfo, resizedImage, _ref, _ref1, _ref2, _ref3;
+            file.width = img.width;
+            file.height = img.height;
+            resizeInfo = _this.options.resize.call(_this, file);
+            if (resizeInfo.trgWidth == null) {
+              resizeInfo.trgWidth = resizeInfo.optWidth;
+            }
+            if (resizeInfo.trgHeight == null) {
+              resizeInfo.trgHeight = resizeInfo.optHeight;
+            }
+            canvas = document.createElement("canvas");
+            ctx = canvas.getContext("2d");
+            canvas.width = resizeInfo.trgWidth;
+            canvas.height = resizeInfo.trgHeight;
+            drawImageIOSFix(ctx, img, (_ref = resizeInfo.srcX) != null ? _ref : 0, (_ref1 = resizeInfo.srcY) != null ? _ref1 : 0, resizeInfo.srcWidth, resizeInfo.srcHeight, (_ref2 = resizeInfo.trgX) != null ? _ref2 : 0, (_ref3 = resizeInfo.trgY) != null ? _ref3 : 0, resizeInfo.trgWidth, resizeInfo.trgHeight);
+            resizedImage = canvas.toDataURL("image/png");
+            _this.emit("resizedImage", file, resizedImage);
             if (callback != null) {
               return callback();
             }
@@ -1437,6 +1517,14 @@ require.register("dropzone/lib/dropzone.js", function (exports, module) {
 
     Dropzone.prototype.uploadFiles = function(files) {
       var file, formData, handleError, headerName, headerValue, headers, i, input, inputName, inputType, key, option, progressObj, response, updateProgress, value, xhr, _i, _j, _k, _l, _len, _len1, _len2, _len3, _m, _ref, _ref1, _ref2, _ref3, _ref4, _ref5;
+      if (this._processingResizedImage === true) {
+        setTimeout(((function(_this) {
+          return function() {
+            return _this.uploadFiles(files);
+          };
+        })(this)), 10);
+        return;
+      }
       xhr = new XMLHttpRequest();
       for (_i = 0, _len = files.length; _i < _len; _i++) {
         file = files[_i];
@@ -1574,10 +1662,47 @@ require.register("dropzone/lib/dropzone.js", function (exports, module) {
           }
         }
       }
+      console.log('@_processingResizedImage', this._processingResizedImage);
+      console.log('files[0].resizedImage', files[0].resizedImage);
       for (i = _m = 0, _ref5 = files.length - 1; 0 <= _ref5 ? _m <= _ref5 : _m >= _ref5; i = 0 <= _ref5 ? ++_m : --_m) {
-        formData.append(this._getParamName(i), files[i], files[i].name);
+        formData.append(this._getParamName(i), dataURLToBlob(files[i].resizedImage), files[i].name);
       }
       return xhr.send(formData);
+    };
+
+
+    /*
+     *Creates and returns a blob from a data URL (either base64 encoded or not).
+    
+     * @param {string} dataURL The data URL to convert.
+     * @return {Blob} A blob representing the array buffer data.
+     */
+
+    dataURLToBlob = function(dataURL) {
+      var BASE64_MARKER, contentType, i, parts, raw, rawLength, uInt8Array;
+      console.log('dataURL', dataURL);
+      BASE64_MARKER = ";base64,";
+      if (dataURL.indexOf(BASE64_MARKER) === -1) {
+        parts = dataURL.split(",");
+        contentType = parts[0].split(":")[1];
+        raw = decodeURIComponent(parts[1]);
+        return new Blob([raw], {
+          type: contentType
+        });
+      }
+      parts = dataURL.split(BASE64_MARKER);
+      contentType = parts[0].split(":")[1];
+      raw = window.atob(parts[1]);
+      rawLength = raw.length;
+      uInt8Array = new Uint8Array(rawLength);
+      i = 0;
+      while (i < rawLength) {
+        uInt8Array[i] = raw.charCodeAt(i);
+        ++i;
+      }
+      return new Blob([uInt8Array], {
+        type: contentType
+      });
     };
 
     Dropzone.prototype._finished = function(files, responseText, e) {

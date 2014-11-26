@@ -50,6 +50,7 @@ class Dropzone extends Em
     "addedfile"
     "removedfile"
     "thumbnail"
+    "resizedImage"
     "error"
     "errormultiple"
     "processing"
@@ -83,6 +84,11 @@ class Dropzone extends Em
     maxThumbnailFilesize: 10 # in MB. When the filename exceeds this limit, the thumbnail will not be generated.
     thumbnailWidth: 100
     thumbnailHeight: 100
+
+    createResizedImages: true
+    maxResizedImageFilesize: 10 # in MB. When the filename exceeds this limit, the thumbnail will not be generated.
+    resizedImageWidth: 100
+    resizedImageHeight: 100
 
     # Can be used to limit the maximum number of files that will be handled
     # by this Dropzone
@@ -345,6 +351,9 @@ class Dropzone extends Em
           thumbnailElement.alt = file.name
           thumbnailElement.src = dataUrl
 
+    resizedImage: (file, dataUrl) ->
+      file.resizedImage = dataUrl
+      console.log file
 
     # Called whenever an error occurs
     # Receives `file` and `message`
@@ -840,6 +849,8 @@ class Dropzone extends Em
 
     @_enqueueThumbnail file
 
+    @_enqueueResizedImage file
+
     @accept file, (error) =>
       if error
         file.accepted = false
@@ -877,6 +888,22 @@ class Dropzone extends Em
       @_processingThumbnail = no
       @_processThumbnailQueue()
 
+
+  _resizedImageQueue: [ ]
+  _processingResizedImage: no
+  _enqueueResizedImage: (file) ->
+    if @options.createResizedImages and file.type.match(/image.*/) and file.size <= @options.maxResizedImageFilesize * 1024 * 1024
+      @_resizedImageQueue.push(file)
+      setTimeout (=> @_processResizedImageQueue()), 0 # Deferring the call
+
+  _processResizedImageQueue: ->
+    return if @_processingResizedImage or @_resizedImageQueue.length == 0
+
+    @_processingResizedImage = yes
+    console.log 'now @_processingResizedImage', @_processingResizedImage
+    @createResizedImage @_resizedImageQueue.shift(), =>
+      @_processingResizedImage = no
+      @_processResizedImageQueue()
 
   # Can be called by the user to remove a file
   removeFile: (file) ->
@@ -935,6 +962,48 @@ class Dropzone extends Em
 
     fileReader.readAsDataURL file
 
+
+  createResizedImage: (file, callback) ->
+
+    fileReader = new FileReader
+
+    fileReader.onload = =>
+
+      # Don't bother creating a resized image for SVG images since they're vector
+      if file.type == "image/svg+xml"
+        @emit "resizedImage", file, fileReader.result
+        callback() if callback?
+        return
+
+      # Not using `new Image` here because of a bug in latest Chrome versions.
+      # See https://github.com/enyo/dropzone/pull/226
+      img = document.createElement "img"
+
+      img.onload = =>
+        file.width = img.width
+        file.height = img.height
+
+        resizeInfo = @options.resize.call @, file
+
+        resizeInfo.trgWidth ?= resizeInfo.optWidth
+        resizeInfo.trgHeight ?= resizeInfo.optHeight
+
+        canvas = document.createElement "canvas"
+        ctx = canvas.getContext "2d"
+        canvas.width = resizeInfo.trgWidth
+        canvas.height = resizeInfo.trgHeight
+
+        # This is a bugfix for iOS' scaling bug.
+        drawImageIOSFix ctx, img, resizeInfo.srcX ? 0, resizeInfo.srcY ? 0, resizeInfo.srcWidth, resizeInfo.srcHeight, resizeInfo.trgX ? 0, resizeInfo.trgY ? 0, resizeInfo.trgWidth, resizeInfo.trgHeight
+
+        resizedImage = canvas.toDataURL "image/png"
+
+        @emit "resizedImage", file, resizedImage
+        callback() if callback?
+
+      img.src = fileReader.result
+
+    fileReader.readAsDataURL file
 
   # Goes through the queue and processes files if there aren't too many already.
   processQueue: ->
@@ -1003,6 +1072,11 @@ class Dropzone extends Em
   uploadFile: (file) -> @uploadFiles [ file ]
 
   uploadFiles: (files) ->
+    # Check if there's images being resized and defer the call
+    if @_processingResizedImage == yes
+      setTimeout (=> @uploadFiles files ), 10
+      return
+
     xhr = new XMLHttpRequest()
 
     # Put the xhr object in the file objects to be able to reference it later.
@@ -1111,9 +1185,62 @@ class Dropzone extends Em
     # Finally add the file
     # Has to be last because some servers (eg: S3) expect the file to be the
     # last parameter
-    formData.append @_getParamName(i), files[i], files[i].name for i in [0..files.length-1]
+    # if @createResizedImages == true
+    #   while !files[0].resizedImage
 
+    console.log '@_processingResizedImage', @_processingResizedImage
+    console.log 'files[0].resizedImage', files[0].resizedImage
+
+    # formData.append @_getParamName(i), files[i], files[i].name for i in [0..files.length-1]
+
+
+    # xhr.send formData
+
+    
+
+    
+
+
+    # while @_processingResizedImage == yes
+    #   setTimeout (=> console.log 'resized yet?', files[0].hasOwnProperty('resizedImage') ), 10
+    
+    # console.log 'resized yet?', files[0].hasOwnProperty('resizedImage')
+
+    formData.append @_getParamName(i), dataURLToBlob(files[i].resizedImage), files[i].name for i in [0..files.length-1]
+    
     xhr.send formData
+      
+
+
+  ###
+  #Creates and returns a blob from a data URL (either base64 encoded or not).
+
+  # @param {string} dataURL The data URL to convert.
+  # @return {Blob} A blob representing the array buffer data.
+  ###
+  dataURLToBlob = (dataURL) ->
+    console.log 'dataURL', dataURL
+    BASE64_MARKER = ";base64,"
+    if dataURL.indexOf(BASE64_MARKER) is -1
+      parts = dataURL.split(",")
+      contentType = parts[0].split(":")[1]
+      raw = decodeURIComponent(parts[1])
+      return new Blob([ raw ],
+        type: contentType
+      )
+    parts = dataURL.split(BASE64_MARKER)
+    contentType = parts[0].split(":")[1]
+    raw = window.atob(parts[1])
+    rawLength = raw.length
+    uInt8Array = new Uint8Array(rawLength)
+    i = 0
+
+    while i < rawLength
+      uInt8Array[i] = raw.charCodeAt(i)
+      ++i
+    new Blob([ uInt8Array ],
+      type: contentType
+    )
 
 
   # Called internally when processing is finished.
